@@ -1,0 +1,4 @@
+# Ne jamais versionner de config VPN ni d'identifiants
+*.ovpn
+auth.txt
+*.ics
