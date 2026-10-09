@@ -104,37 +104,80 @@ jobs:
       - name: Télécharger le calendrier
         env:
           ICS_URL: ${{ secrets.ICS_URL }}
+          ICS_USERNAME: ${{ secrets.ICS_USERNAME }}
+          ICS_PASSWORD: ${{ secrets.ICS_PASSWORD }}
+          VPN_USERNAME: ${{ secrets.VPN_USERNAME }}
+          VPN_PASSWORD: ${{ secrets.VPN_PASSWORD }}
         run: |
           url=$(printf '%s' "$ICS_URL" | tr -d '\r\n' | sed -E 's/^[[:space:]]+|[[:space:]]+$//g')
+          out="$RUNNER_TEMP/cours.ics"
+          headers="$RUNNER_TEMP/headers.txt"
 
-          set +e
-          http_code=$(curl -sS -L --retry 3 --retry-delay 5 --connect-timeout 20 --max-time 90 \
-            -o "$RUNNER_TEMP/cours.ics" -w '%{http_code}' "$url" 2>/dev/null)
-          rc=$?
-          set -e
+          # Identifiants pour le serveur d'emploi du temps : ICS_USERNAME/ICS_PASSWORD
+          # s'ils existent, sinon les identifiants VPN (même compte universitaire).
+          user="${ICS_USERNAME:-$VPN_USERNAME}"
+          pass="${ICS_PASSWORD:-$VPN_PASSWORD}"
+          netrc="$RUNNER_TEMP/netrc"
+          host=$(printf '%s' "$url" | sed -E 's#^[a-zA-Z]+://([^/:?]+).*#\1#')
+          umask 077
+          printf 'machine %s\nlogin %s\npassword %s\n' "$host" "$user" "$pass" | tr -d '\r' > "$netrc"
 
-          if [ "$rc" -ne 0 ]; then
-            case "$rc" in
+          fetch() {   # $1 = "noauth" ou "auth"
+            local auth=()
+            [ "$1" = "auth" ] && auth=(--anyauth --netrc-file "$netrc")
+            curl -sS -L --retry 3 --retry-delay 5 --connect-timeout 20 --max-time 90 \
+              "${auth[@]}" -D "$headers" -o "$out" -w '%{http_code}' "$url" 2>/dev/null
+          }
+
+          fail_curl() {
+            case "$1" in
               6)  reason="nom d'hôte introuvable (DNS)" ;;
               7)  reason="connexion refusée" ;;
               28) reason="délai dépassé" ;;
               35|60) reason="erreur TLS/certificat" ;;
-              *)  reason="erreur curl $rc" ;;
+              *)  reason="erreur curl $1" ;;
             esac
             echo "❌ Téléchargement impossible : $reason. Gist non modifié."
+            rm -f "$netrc"
             exit 1
+          }
+
+          set +e
+          http_code=$(fetch noauth); rc=$?
+          set -e
+          [ "$rc" -eq 0 ] || fail_curl "$rc"
+
+          if [ "$http_code" = "401" ]; then
+            scheme=$(grep -i '^www-authenticate:' "$headers" | head -n 1 | awk '{print $2}' | tr -d '\r,')
+            echo "ℹ️ Authentification demandée par le serveur (${scheme:-schéma inconnu})"
+            if [[ "$url" != https://* ]]; then
+              echo "❌ Le lien n'est pas en HTTPS : identifiants non envoyés par sécurité."
+              rm -f "$netrc"
+              exit 1
+            fi
+            set +e
+            http_code=$(fetch auth); rc=$?
+            set -e
+            [ "$rc" -eq 0 ] || fail_curl "$rc"
+            if [ "$http_code" = "401" ]; then
+              echo "❌ Identifiants refusés par le serveur d'emploi du temps (HTTP 401)."
+              echo "   Ajoute les secrets ICS_USERNAME / ICS_PASSWORD s'ils diffèrent de ceux du VPN."
+              rm -f "$netrc"
+              exit 1
+            fi
           fi
+          rm -f "$netrc" "$headers"
+
           if [ "$http_code" != "200" ]; then
             echo "❌ Le serveur a répondu HTTP $http_code. Gist non modifié."
             exit 1
           fi
-          if ! grep -q "BEGIN:VCALENDAR" "$RUNNER_TEMP/cours.ics" \
-             || ! grep -q "END:VCALENDAR" "$RUNNER_TEMP/cours.ics"; then
-            echo "❌ Le fichier reçu n'est pas un calendrier ICS complet. Gist non modifié."
+          if ! grep -q "BEGIN:VCALENDAR" "$out" || ! grep -q "END:VCALENDAR" "$out"; then
+            echo "❌ Le fichier reçu n'est pas un calendrier ICS complet (page de connexion ?). Gist non modifié."
             exit 1
           fi
 
-          events=$(grep -c "BEGIN:VEVENT" "$RUNNER_TEMP/cours.ics" || true)
+          events=$(grep -c "BEGIN:VEVENT" "$out" || true)
           if [ "$events" -eq 0 ]; then
             echo "⚠️ Calendrier valide mais vide (vacances ?)"
           else

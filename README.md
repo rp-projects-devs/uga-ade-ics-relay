@@ -1,6 +1,6 @@
 # uga-ade-ics-relay
 
-Abonne **ron calendrier** (Google Agenda, Apple Calendrier, Thunderbird…) à ton emploi du temps **ADE** de l'Université Grenoble Alpes, même quand le lien d'export n'est accessible que via le VPN de l'établissement.
+Abonne **ton calendrier** (Google Agenda, Apple Calendrier, Thunderbird…) à ton emploi du temps **ADE** de l'Université Grenoble Alpes, même quand le lien d'export n'est accessible que via le VPN de l'établissement.
 
 Toutes les 3 h, une GitHub Action se connecte au VPN, télécharge ton export `.ics`, puis le republie sur un **Gist secret**. Ton agenda s'abonne à ce Gist et reçoit les mises à jour automatiquement.
 
@@ -65,6 +65,8 @@ Dans ton fork, va dans **Settings → Secrets and variables → Actions → New 
 | `GIST_ID` | l'identifiant du Gist |
 | `GIST_TOKEN` | le jeton `ghp_...` |
 
+Si le serveur d'emploi du temps demande une authentification, le workflow réutilise automatiquement les identifiants VPN (même compte universitaire). S'ils sont différents, ajoute deux secrets facultatifs : `ICS_USERNAME` et `ICS_PASSWORD`.
+
 ### 6. Tester
 
 Ouvre **Actions → Sync calendrier ADE → Run workflow**. Après environ une minute, tu dois voir :
@@ -93,6 +95,7 @@ N'ajoute pas de hash de commit dans l'URL : sans hash, elle pointe toujours vers
 | `AUTH_FAILED` | Identifiant ou mot de passe VPN incorrect. |
 | `TLS handshake failed` ou délai dépassé | `VPN_CONFIG` est incomplet (il faut tout le fichier, bloc `<ca>` compris), ou le serveur VPN bloque les IP de GitHub. |
 | `nom d'hôte introuvable` / `délai dépassé` | Le lien n'est pas joignable via le VPN : vérifie `ICS_URL`. |
+| `Identifiants refusés par le serveur d'emploi du temps` | Ajoute les secrets `ICS_USERNAME` / `ICS_PASSWORD` avec les bons identifiants. |
 | `HTTP 4xx/5xx` | Le lien est invalide ou ADE est indisponible : recopie-le depuis Zenith. |
 | `n'est pas un calendrier ICS complet` | Le lien renvoie une page d'erreur ou de connexion : recopie-le depuis Zenith. |
 | `GIST_TOKEN invalide ou expiré` | Régénère le jeton et mets à jour le secret. |
